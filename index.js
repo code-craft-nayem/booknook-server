@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { MongoClient } from 'mongodb';
+import { MongoClient, ObjectId } from 'mongodb';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 const app = express();
@@ -42,15 +42,15 @@ export const verifyToken = async (req, res, next) => {
     return res.status(401).send({ msg: 'unauthorized' });
   }
 
-  const token = authHeader.split(' ')[1];
+  const [scheme, token] = authHeader.trim().split(/\s+/);
 
-  if (!token) {
+  if (scheme?.toLowerCase() !== 'bearer' || !token) {
     return res.status(401).send({ msg: 'unauthorized' });
   }
 
   try {
     const { payload } = await jwtVerify(token, JWKS);
-
+    console.log('JWT Payload:', payload);
     req.user = payload;
     next();
   } catch (error) {
@@ -62,6 +62,89 @@ app.get('/', (req, res) => {
   res.send({
     message: 'server is running fine!'
   });
+});
+
+app.get('/books', async (req, res) => {
+  try {
+    const books = await booksCollection.find({}).toArray();
+    res.send(books);
+  } catch (error) {
+    console.error('Failed to fetch books:', error.message);
+    res.status(500).send({ msg: 'Failed to fetch books' });
+  }
+});
+
+app.get('/books/:id', async (req, res) => {
+  const { id } = req.params;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).send({ msg: 'Invalid book ID' });
+  }
+
+  try {
+    const book = await booksCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!book) {
+      return res.status(404).send({ msg: 'Book not found' });
+    }
+
+    res.send(book);
+  } catch (error) {
+    console.error('Failed to fetch book:', error.message);
+    res.status(500).send({ msg: 'Failed to fetch book' });
+  }
+});
+
+
+
+
+const BOOK_CATEGORIES = ['Fiction', 'Science', 'History', 'Kids', 'Others'];
+
+app.post('/books', verifyToken, async (req, res) => {
+  const { title, author, category, image, description, totalCopies } = req.body;
+
+  if (![title, author, image, description].every(value => typeof value === 'string' && value.trim())) {
+    return res.status(400).send({ msg: 'Please fill in all required book fields' });
+  }
+
+  if (!BOOK_CATEGORIES.includes(category)) {
+    return res.status(400).send({ msg: 'Please select a valid book category' });
+  }
+
+  const copies = Number(totalCopies);
+
+  if (!Number.isInteger(copies) || copies < 1) {
+    return res.status(400).send({ msg: 'Total copies must be a whole number of at least 1' });
+  }
+
+  const userName = req.user.name;
+  const userEmail = req.user.email;
+
+  if (!userName || !userEmail) {
+    return res.status(400).send({ msg: 'User name or email is missing' });
+  }
+
+  const newBook = {
+    title: title.trim(),
+    author: author.trim(),
+    category,
+    image: image.trim(),
+    description: description.trim(),
+    userName,
+    userEmail,
+    totalCopies: copies,
+    availableCopies: copies,
+    createdAt: new Date()
+  };
+
+  try {
+    const result = await booksCollection.insertOne(newBook);
+
+    res.status(201).send({ _id: result.insertedId, ...newBook });
+  } catch (error) {
+    console.error('Failed to add book:', error.message);
+    res.status(500).send({ msg: 'Failed to add book' });
+  }
 });
 
 app.listen(PORT, async () => {
