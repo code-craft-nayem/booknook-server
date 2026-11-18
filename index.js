@@ -64,6 +64,9 @@ app.get('/', (req, res) => {
   });
 });
 
+
+
+
 app.get('/books', async (req, res) => {
   try {
     const books = await booksCollection.find({}).toArray();
@@ -150,8 +153,6 @@ app.post('/books', verifyToken, async (req, res) => {
 
 
 
-
-
 app.patch('/books/:id', verifyToken, async (req, res) => {
   const { id } = req.params;
   const { title, author, category, image, description, totalCopies } = req.body;
@@ -208,6 +209,38 @@ app.patch('/books/:id', verifyToken, async (req, res) => {
     res.status(500).send({ msg: 'Failed to update book' });
   }
 });
+
+
+
+
+app.delete('/books/:id', verifyToken, async (req, res) => {
+  const { id } = req.params;
+
+  if (!ObjectId.isValid(id)) return res.status(400).send({ msg: 'Invalid book ID' });
+
+  try {
+    const book = await booksCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!book) return res.status(404).send({ msg: 'Book not found' });
+    if (book.userEmail !== req.user.email) return res.status(403).send({ msg: 'You can only delete your own books' });
+
+
+    const borrowed = (book.totalCopies || 0) - (book.availableCopies ?? book.totalCopies);
+
+    if (borrowed > 0) {
+      return res.status(409).send({ msg: 'This book has active borrows and cannot be deleted' });
+    }
+
+    await booksCollection.deleteOne({ _id: new ObjectId(id) });
+
+    res.send({ msg: 'Book deleted successfully' });
+  } catch (error) {
+    console.error('Failed to delete book:', error.message);
+    res.status(500).send({ msg: 'Failed to delete book' });
+  }
+});
+
+
 
 app.listen(PORT, async () => {
   console.log(`BookNook server is running on http://localhost:${PORT}`);
