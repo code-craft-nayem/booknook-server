@@ -147,6 +147,68 @@ app.post('/books', verifyToken, async (req, res) => {
   }
 });
 
+
+
+
+
+
+app.patch('/books/:id', verifyToken, async (req, res) => {
+  const { id } = req.params;
+  const { title, author, category, image, description, totalCopies } = req.body;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).send({ msg: 'Invalid book ID' });
+  }
+
+  const updates = {};
+  const fields = { title, author, image, description };
+
+  if (!Object.entries(fields).every(([key, value]) => {
+    if (value === undefined) return true;
+    updates[key] = typeof value === 'string' ? value.trim() : '';
+    return typeof value === 'string' && !!value.trim();
+  })) return res.status(400).send({ msg: 'Please fill in all required book fields correctly' });
+
+  if (category !== undefined && !BOOK_CATEGORIES.includes(category)) {
+    return res.status(400).send({ msg: 'Please select a valid book category' });
+  }
+
+  if (category !== undefined) updates.category = category;
+
+  const copies = totalCopies === undefined ? undefined : Number(totalCopies);
+
+  if (copies !== undefined && (!Number.isInteger(copies) || copies < 1)) {
+    return res.status(400).send({ msg: 'Total copies must be a whole number of at least 1' });
+  }
+
+  try {
+    const book = await booksCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!book) return res.status(404).send({ msg: 'Book not found' });
+    if (book.userEmail !== req.user.email) return res.status(403).send({ msg: 'You can only update your own books' });
+
+    const borrowed = (book.totalCopies || 0) - (book.availableCopies ?? book.totalCopies);
+
+    if (copies !== undefined && copies < borrowed) {
+      return res.status(400).send({ msg: `Total copies cannot be less than the ${borrowed} currently borrowed copies` });
+    }
+
+    if (copies !== undefined) {
+      updates.totalCopies = copies;
+      updates.availableCopies = copies - borrowed;
+    }
+
+    if (!Object.keys(updates).length) return res.status(400).send({ msg: 'No valid fields to update' });
+
+    await booksCollection.updateOne({ _id: new ObjectId(id) }, { $set: updates });
+
+    res.send(await booksCollection.findOne({ _id: new ObjectId(id) }));
+  } catch (error) {
+    console.error('Failed to update book:', error.message);
+    res.status(500).send({ msg: 'Failed to update book' });
+  }
+});
+
 app.listen(PORT, async () => {
   console.log(`BookNook server is running on http://localhost:${PORT}`);
 
