@@ -22,6 +22,10 @@ const client = new MongoClient(process.env.MONGO_DB_URL);
 
 export async function connectToMongoDB() {
   await client.connect();
+
+  // One borrow record per user per book, even if two requests arrive together.
+  await borrowsCollection.createIndex({ bookId: 1, userEmail: 1 }, { unique: true });
+
   console.log('Successfully connected to MongoDB!');
   return client;
 }
@@ -239,6 +243,133 @@ app.delete('/books/:id', verifyToken, async (req, res) => {
     res.status(500).send({ msg: 'Failed to delete book' });
   }
 });
+
+
+
+
+app.post('/borrows', verifyToken, async (req, res) => {
+  const { bookId, returnDate } = req.body;
+  const { email: userEmail } = req.user;
+
+  if (!bookId || typeof bookId !== 'string' || !ObjectId.isValid(bookId)) {
+    return res.status(400).send({ msg: 'Please provide a valid book ID' });
+  }
+
+  if (!userEmail) {
+    return res.status(400).send({ msg: 'User email is missing' });
+  }
+
+  if (!returnDate || typeof returnDate !== 'string' || Number.isNaN(Date.parse(returnDate))) {
+    return res.status(400).send({ msg: 'Please provide a valid return date' });
+  }
+
+  // borrowDate is always generated here, never taken from the client.
+  const borrowDate = new Date().toISOString().slice(0, 10);
+
+  if (returnDate < borrowDate) {
+    return res.status(400).send({ msg: 'Return date cannot be before the borrow date' });
+  }
+
+  const objectId = new ObjectId(bookId);
+
+  try {
+    const book = await booksCollection.findOne({ _id: objectId });
+
+    if (!book) return res.status(404).send({ msg: 'Book not found' });
+    if (book.userEmail === userEmail) return res.status(403).send({ msg: 'You cannot borrow your own book' });
+
+    const alreadyBorrowed = await borrowsCollection.findOne({ bookId: objectId.toString(), userEmail });
+
+    if (alreadyBorrowed) return res.status(409).send({ msg: 'You have already borrowed this book' });
+
+    const updatedBook = await booksCollection.findOneAndUpdate(
+      { _id: objectId, availableCopies: { $gt: 0 } },
+      { $inc: { availableCopies: -1 } },
+      { returnDocument: 'after' }
+    );
+
+    if (!updatedBook) return res.status(409).send({ msg: 'This book is not available right now' });
+
+    const newBorrow = {
+      bookId: objectId.toString(),
+      bookTitle: book.title,
+      bookImage: book.image,
+      userEmail,
+      borrowDate,
+      returnDate
+    };
+
+    try {
+      const result = await borrowsCollection.insertOne(newBorrow);
+      res.status(201).send({ _id: result.insertedId, ...newBorrow });
+    } catch (error) {
+      await booksCollection.updateOne({ _id: objectId }, { $inc: { availableCopies: 1 } });
+
+      if (error.code === 11000) {
+        return res.status(409).send({ msg: 'You have already borrowed this book' });
+      }
+
+      throw error;
+    }
+
+  } catch (error) {
+    console.error('Failed to borrow book:', error.message);
+    res.status(500).send({ msg: 'Failed to borrow book' });
+  }
+});
+
+
+
+
+
+app.get('/borrows', verifyToken, async (req, res) => {
+  const { email: userEmail } = req.user;
+
+  if (!userEmail) return res.status(400).send({ msg: 'User email is missing' });
+
+  try {
+    const borrows = await borrowsCollection.find({ userEmail }).toArray();
+
+    res.send(borrows);
+  } catch (error) {
+    console.error('Failed to fetch borrows:', error.message);
+    res.status(500).send({ msg: 'Failed to fetch borrows' });
+  }
+});
+
+
+
+
+app.delete('/borrows/:id', verifyToken, async (req, res) => {
+  const { id } = req.params;
+  const { email: userEmail } = req.user;
+
+  if (!ObjectId.isValid(id)) return res.status(400).send({ msg: 'Invalid borrow ID' });
+
+  try {
+    const borrow = await borrowsCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!borrow) return res.status(404).send({ msg: 'Borrow record not found' });
+    if (borrow.userEmail !== userEmail) return res.status(403).send({ msg: 'You can only return your own borrows' });
+
+    const result = await borrowsCollection.deleteOne({ _id: new ObjectId(id) });
+
+
+    if (result.deletedCount === 1 && borrow.bookId && ObjectId.isValid(borrow.bookId)) {
+      await booksCollection.updateOne(
+        { _id: new ObjectId(borrow.bookId) },
+        { $inc: { availableCopies: 1 } }
+      );
+    }
+
+    res.send({ msg: 'Book returned successfully' });
+  } catch (error) {
+    console.error('Failed to return book:', error.message);
+    res.status(500).send({ msg: 'Failed to return book' });
+  }
+});
+
+
 
 
 
