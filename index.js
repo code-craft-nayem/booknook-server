@@ -23,7 +23,6 @@ const client = new MongoClient(process.env.MONGO_DB_URL);
 export async function connectToMongoDB() {
   await client.connect();
 
-  // One borrow record per user per book, even if two requests arrive together.
   await borrowsCollection.createIndex({ bookId: 1, userEmail: 1 }, { unique: true });
 
   console.log('Successfully connected to MongoDB!');
@@ -68,9 +67,6 @@ app.get('/', (req, res) => {
   });
 });
 
-
-
-
 app.get('/books', async (req, res) => {
   try {
     const books = await booksCollection.find({}).toArray();
@@ -103,10 +99,7 @@ app.get('/books/:id', async (req, res) => {
 });
 
 
-
-
 const BOOK_CATEGORIES = ['Fiction', 'Science', 'History', 'Kids', 'Others'];
-
 app.post('/books', verifyToken, async (req, res) => {
   const { title, author, category, image, description, totalCopies } = req.body;
 
@@ -154,9 +147,6 @@ app.post('/books', verifyToken, async (req, res) => {
   }
 });
 
-
-
-
 app.patch('/books/:id', verifyToken, async (req, res) => {
   const { id } = req.params;
   const { title, author, category, image, description, totalCopies } = req.body;
@@ -164,6 +154,7 @@ app.patch('/books/:id', verifyToken, async (req, res) => {
   if (!ObjectId.isValid(id)) {
     return res.status(400).send({ msg: 'Invalid book ID' });
   }
+
 
   const updates = {};
   const fields = { title, author, image, description };
@@ -214,9 +205,6 @@ app.patch('/books/:id', verifyToken, async (req, res) => {
   }
 });
 
-
-
-
 app.delete('/books/:id', verifyToken, async (req, res) => {
   const { id } = req.params;
 
@@ -245,8 +233,6 @@ app.delete('/books/:id', verifyToken, async (req, res) => {
 });
 
 
-
-
 app.post('/borrows', verifyToken, async (req, res) => {
   const { bookId, returnDate } = req.body;
   const { email: userEmail } = req.user;
@@ -263,7 +249,7 @@ app.post('/borrows', verifyToken, async (req, res) => {
     return res.status(400).send({ msg: 'Please provide a valid return date' });
   }
 
-  // borrowDate is always generated here, never taken from the client.
+
   const borrowDate = new Date().toISOString().slice(0, 10);
 
   if (returnDate < borrowDate) {
@@ -319,9 +305,6 @@ app.post('/borrows', verifyToken, async (req, res) => {
 });
 
 
-
-
-
 app.get('/borrows', verifyToken, async (req, res) => {
   const { email: userEmail } = req.user;
 
@@ -329,16 +312,12 @@ app.get('/borrows', verifyToken, async (req, res) => {
 
   try {
     const borrows = await borrowsCollection.find({ userEmail }).toArray();
-
     res.send(borrows);
   } catch (error) {
     console.error('Failed to fetch borrows:', error.message);
     res.status(500).send({ msg: 'Failed to fetch borrows' });
   }
 });
-
-
-
 
 app.delete('/borrows/:id', verifyToken, async (req, res) => {
   const { id } = req.params;
@@ -368,10 +347,6 @@ app.delete('/borrows/:id', verifyToken, async (req, res) => {
     res.status(500).send({ msg: 'Failed to return book' });
   }
 });
-
-
-
-
 
 app.listen(PORT, async () => {
   console.log(`BookNook server is running on http://localhost:${PORT}`);
